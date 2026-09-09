@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>3D Shape Sandbox — Hand Gesture (Browser-only)</title>
+<style>
+  :root{
+    --bg: #0b0e11;
+    --panel: rgba(15, 18, 22, 0.72);
+    --line: rgba(255,255,255,0.14);
+    --text: #eef1f4;
+    --muted: #9aa4ad;
+    --accent: #59d9c4;
+    --danger: #e0623b;
+  }
+  *{ box-sizing: border-box; }
+  html, body{
+    margin:0; padding:0; width:100%; height:100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow: hidden;
+  }
+
+  #stage{ position: fixed; inset: 0; background: #000; }
+
+  /* Video webcam mentah, di-mirror lewat CSS supaya terasa seperti cermin */
+  #webcam{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    filter: saturate(1.05) contrast(1.02);
+  }
+
+  /* Kanvas Three.js transparan di atas video. */
+  #gl{
+    position:absolute; inset:0;
+    width:100%; height:100%;
+    pointer-events:none;
+  }
+
+  #boot{
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 50% 40%, #14181d 0%, #0b0e11 70%);
+    z-index: 30;
+    transition: opacity .4s ease;
+  }
+  #boot.hidden{ opacity:0; pointer-events:none; }
+  .boot-card{
+    max-width: 460px;
+    padding: 28px 30px;
+    border-radius: 16px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+  }
+  .boot-card h1{ font-size: 19px; margin: 0 0 10px; display:flex; align-items:center; gap:10px; }
+  .dot-pulse{
+    width:9px; height:9px; border-radius:50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 0 rgba(89,217,196,.6);
+    animation: pulse 1.4s infinite;
+  }
+  @keyframes pulse{
+    0%{ box-shadow: 0 0 0 0 rgba(89,217,196,.55); }
+    70%{ box-shadow: 0 0 0 10px rgba(89,217,196,0); }
+    100%{ box-shadow: 0 0 0 0 rgba(89,217,196,0); }
+  }
+  .boot-card p{ margin: 6px 0; color: var(--muted); font-size: 13.5px; line-height:1.55; }
+  .boot-card code{ background: rgba(255,255,255,0.08); padding: 2px 7px; border-radius: 6px; font-size: 12.5px; color: var(--accent); }
+  .boot-card.error{ border-color: rgba(224,98,59,0.5); }
+  .boot-card.error h1{ color: var(--danger); }
+
+  #hud{
+    position:absolute; top:18px; left:18px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(8px);
+    max-width: 340px;
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--muted);
+    z-index: 10;
+  }
+  #hud b{ color: var(--text); }
+  #hud .row{ display:flex; gap:8px; align-items:flex-start; margin-bottom:6px; }
+  #hud .row:last-child{ margin-bottom:0; }
+  #hud .tag{ flex: none; width: 20px; text-align:center; }
+
+  #status{
+    position:absolute; top:18px; right:18px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(8px);
+    font-size: 12px;
+    color: var(--muted);
+    display:flex; align-items:center; gap:8px;
+    z-index: 10;
+  }
+  #status .led{ width:8px; height:8px; border-radius:50%; background:#555; }
+  #status.live .led{ background: #55e08a; }
+  #status.dead .led{ background: var(--danger); }
+
+  #trash{
+    position:absolute;
+    right: 2%; bottom: 4%;
+    width: 160px; height: 160px;
+    border-radius: 32px;
+    background: var(--panel);
+    border: 2px dashed rgba(255,255,255,0.3);
+    display:flex; align-items:center; justify-content:center;
+    font-size: 62px;
+    backdrop-filter: blur(6px);
+    transition: transform .15s ease, background .15s ease, border-color .15s ease;
+    z-index: 10;
+  }
+  #trash.armed{
+    transform: scale(1.14);
+    background: rgba(224, 98, 59, 0.32);
+    border-color: var(--danger);
+  }
+  #trash .label{
+    position:absolute; bottom:-24px;
+    font-size: 12px; color: var(--muted);
+    white-space:nowrap;
+  }
+
+  /* Label pemilih bentuk */
+  #shapePicker{
+    position:absolute; top:0; left:0;
+    padding: 8px 14px;
+    border-radius: 12px;
+    background: rgba(20, 24, 29, 0.88);
+    border: 1px solid var(--accent);
+    backdrop-filter: blur(6px);
+    font-size: 13px;
+    display:flex; align-items:center; gap:8px;
+    transform: translate(-50%, -120%);
+    opacity: 0;
+    transition: opacity .15s ease;
+    pointer-events:none;
+    z-index: 15;
+    white-space:nowrap;
+  }
+  #shapePicker.show{ opacity: 1; }
+  #shapePicker .icon{ font-size: 20px; }
+
+  #toast{
+    position:absolute; bottom: 18px; left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    padding: 9px 16px; border-radius: 999px;
+    background: var(--panel); border:1px solid var(--line);
+    font-size: 12.5px; color: var(--text);
+    opacity:0; transition: opacity .25s ease, transform .25s ease;
+    z-index: 10;
+    backdrop-filter: blur(8px);
+  }
+  #toast.show{ opacity:1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="webcam" autoplay muted playsinline></video>
+  <canvas id="gl"></canvas>
+
+  <div id="hud">
+    <div class="row"><span class="tag">🖐️</span><div>Bentangkan <b>5 Jari</b> di ruang kosong untuk memunculkan bentuk baru.</div></div>
+    <div class="row"><span class="tag">🤏</span><div><b>Pinch/Cubit</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
+    <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch pakai tangan satunya untuk <b>resize &amp; putar</b>.</div></div>
+    <div class="row"><span class="tag">✌️</span><div>Bentuk gesture <b>"V"</b> untuk memilih jenis bentuk berikutnya.</div></div>
+    <div class="row"><span class="tag">🗑️</span><div>Lepas pinch di atas tempat sampah untuk <b>menghapus</b>.</div></div>
+  </div>
+
+  <div id="status">
+    <span class="led"></span>
+    <span id="statusText">Menyiapkan kamera &amp; model...</span>
+  </div>
+
+  <div id="trash">🗑️<span class="label">Tempat sampah</span></div>
+
+  <div id="shapePicker">
+    <span class="icon" id="pickerIcon">🔵</span>
+    <span id="pickerName">Bola</span>
+  </div>
+
+  <div id="toast"></div>
+
+  <div id="boot">
+    <div class="boot-card" id="bootCard">
+      <h1><span class="dot-pulse"></span>Menyiapkan kamera &amp; MediaPipe...</h1>
+      <p>Browser akan meminta izin akses kamera — klik <b>Allow</b> saat muncul.</p>
+      <p>Jalankan server lokal jika membuka dari lokal:</p>
+      <p><code>python -m http.server 8666</code></p>
+      <p>lalu buka <code>http://localhost:8666/index.html</code>.</p>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+(function(){
+  "use strict";
+
+  // ----------------------------------------------------------------
+  // Konfigurasi
+  // ----------------------------------------------------------------
+  const CAM_DIST = 6;
+  const FOV_DEG = 45;
+
+  const GRAB_RADIUS_PX = 100;
+  const HOVER_RADIUS_PX = 150;
+  const RESIZE_TRIGGER_RADIUS = 260;
+  const SPAWN_HOLD_SEC = 0.35;
+  const MIN_SCALE = 0.35;
+  const MAX_SCALE = 3.2;
+
+  const POS_LERP = 0.4;
+  const IDLE_LERP = 0.14;
+  const DOT_LERP = 0.85;
+  const LANDMARK_SMOOTH = 0.75;
+  const HAND_TIMEOUT_MS = 300;
+
+  const PINCH_ENTER_RATIO = 0.35;
+  const PINCH_EXIT_RATIO = 0.55;
+
+  const V_SIGN_MARGIN = 0.02;
+
+  const TRASH_ZONE = { xMin: 0.72, yMin: 0.62 };
+
+  const SHAPE_TYPES = ["sphere", "box", "cone", "pyramid", "cylinder", "torus"];
+  const PALETTE = {
+    sphere: 0x74e08a, cone: 0x59d9d9, pyramid: 0xe0623b,
+    box: 0xe0c23b, torus: 0xb07ce0, cylinder: 0x5f8fe0,
+  };
+  const SHAPE_ICON = {
+    sphere: "🔵", box: "🟨", cone: "🔷",
+    pyramid: "🔺", cylinder: "🥫", torus: "🍩",
+  };
+  const SHAPE_LABEL = {
+    sphere: "Bola", box: "Kubus", cone: "Kerucut",
+    pyramid: "Piramida", cylinder: "Tabung", torus: "Donat",
+  };
+
+  let selectedShapeIndex = 0;
+  let selectedShapeType = SHAPE_TYPES[selectedShapeIndex];
+
+  // ----------------------------------------------------------------
+  // Setup Three.js
+  // ----------------------------------------------------------------
+  const canvas = document.getElementById("gl");
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(FOV_DEG, window.innerWidth / window.innerHeight, 0.1, 100);
+  camera.position.set(0, 0, CAM_DIST);
+  camera.lookAt(0, 0, 0);
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+  const key = new THREE.DirectionalLight(0xffffff, 0.9);
+  key.position.set(2, 3, 4);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x88bbff, 0.4);
+  rim.position.set(-3, -1, -2);
+  scene.add(rim);
+
+  function resize(){
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+  resize();
+
+  function screenToWorld(nx, ny, z){
+    z = z || 0;
+    const dist = CAM_DIST - z;
+    const halfH = dist * Math.tan((FOV_DEG * Math.PI / 180) / 2);
+    const halfW = halfH * camera.aspect;
+    const wx = (nx - 0.5) * 2 * halfW;
+    const wy = (0.5 - ny) * 2 * halfH;
+    return new THREE.Vector3(wx, wy, z);
+  }
+
+  function normToPixel(nx, ny){
+    return { x: nx * window.innerWidth, y: ny * window.innerHeight };
+  }
+
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  // ----------------------------------------------------------------
+  // Geometri & mesh bentuk
+  // ----------------------------------------------------------------
+  function buildGeometry(type){
+    switch(type){
+      case "sphere":   return new THREE.SphereGeometry(0.55, 20, 16);
+      case "cone":     return new THREE.ConeGeometry(0.6, 1.1, 28, 4);
+      case "pyramid":  return new THREE.ConeGeometry(0.68, 1.05, 4, 1);
+      case "box":      return new THREE.BoxGeometry(0.85, 0.85, 0.85);
+      case "torus":    return new THREE.TorusGeometry(0.5, 0.18, 12, 28);
+      case "cylinder": return new THREE.CylinderGeometry(0.5, 0.5, 1.0, 24);
+      default:         return new THREE.SphereGeometry(0.5, 16, 12);
+    }
+  }
+
+  function makeShapeMesh(type){
+    const color = PALETTE[type] || 0xffffff;
+    const geo = buildGeometry(type);
+
+    const solid = new THREE.Mesh(
+      geo,
+      new THREE.MeshPhongMaterial({
+        color, transparent: true, opacity: 0.5,
+        shininess: 60, side: THREE.DoubleSide, depthWrite: false,
+      })
+    );
+
+    const wire = new THREE.LineSegments(
+      new THREE.EdgesGeometry(geo, 1),
+      new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 })
+    );
+    wire.scale.setScalar(1.01);
+
+    const group = new THREE.Group();
+    group.add(solid);
+    group.add(wire);
+    return group;
+  }
+
+  // ----------------------------------------------------------------
+  // State bentuk-bentuk
+  // ----------------------------------------------------------------
+  let shapeIdCounter = 0;
+  const shapes = [];
+
+  function spawnShape(nx, ny){
+    const type = selectedShapeType;
+    const group = makeShapeMesh(type);
+    group.scale.setScalar(0.001);
+    scene.add(group);
+
+    const shape = {
+      id: "s" + (shapeIdCounter++),
+      type, group, nx, ny,
+      heldBy: null,
+      rotSpeed: (Math.random() * 0.6 + 0.25) * (Math.random() < 0.5 ? -1 : 1),
+      bobPhase: Math.random() * Math.PI * 2,
+      baseScale: 1,
+      displayScale: 0.001,
+      resizeSession: null,
+      deleting: false,
+    };
+    shapes.push(shape);
+    showToast("Bentuk baru: " + SHAPE_LABEL[type]);
+    return shape;
+  }
+
+  function removeShape(shape){
+    if (shape.deleting) return;
+    shape.deleting = true;
+    const start = performance.now();
+    const dur = 260;
+    const startScale = shape.group.scale.x;
+    function anim(){
+      const t = Math.min(1, (performance.now() - start) / dur);
+      shape.group.scale.setScalar(Math.max(0.0001, startScale * (1 - t)));
+      shape.group.rotation.z += 0.25;
+      if (t < 1) requestAnimationFrame(anim);
+      else {
+        scene.remove(shape.group);
+        const idx = shapes.indexOf(shape);
+        if (idx >= 0) shapes.splice(idx, 1);
+      }
+    }
+    requestAnimationFrame(anim);
+  }
+
+  function isInTrashZone(nx, ny){
+    return nx >= TRASH_ZONE.xMin && ny >= TRASH_ZONE.yMin;
+  }
+
+  // ----------------------------------------------------------------
+  // Titik ujung jari
+  // ----------------------------------------------------------------
+  const FINGER_TIP_IDX = [4, 8, 12, 16, 20];
+  const FINGERTIP_COLOR = 0x74e6d6;
+  const PINCH_COLOR = 0xffd166;
+
+  const fingerDotsPool = {};
+  function getFingerDots(handId){
+    if (!fingerDotsPool[handId]){
+      const arr = [];
+      for (let i = 0; i < FINGER_TIP_IDX.length; i++){
+        const mesh = new THREE.Mesh(
+          new THREE.SphereGeometry(0.045, 12, 10),
+          new THREE.MeshBasicMaterial({ color: FINGERTIP_COLOR })
+        );
+        mesh.visible = false;
+        scene.add(mesh);
+        arr.push({ mesh, curNx: null, curNy: null });
+      }
+      fingerDotsPool[handId] = arr;
+    }
+    return fingerDotsPool[handId];
+  }
+  function hideAllDots(exceptIds){
+    for (const id in fingerDotsPool){
+      if (exceptIds && exceptIds.has(id)) continue;
+      fingerDotsPool[id].forEach(d => d.mesh.visible = false);
+    }
+  }
+
+  const spawnRingPool = {};
+  function getSpawnRing(handId){
+    if (!spawnRingPool[handId]){
+      const mesh = new THREE.Mesh(
+        new THREE.RingGeometry(0.26, 0.33, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
+      );
+      mesh.visible = false;
+      scene.add(mesh);
+      spawnRingPool[handId] = mesh;
+    }
+    return spawnRingPool[handId];
+  }
+  function hideAllSpawnRings(exceptIds){
+    for (const id in spawnRingPool){
+      if (exceptIds && exceptIds.has(id)) continue;
+      spawnRingPool[id].visible = false;
+    }
+  }
+
+  // ----------------------------------------------------------------
+  // Toast
+  // ----------------------------------------------------------------
+  const toastEl = document.getElementById("toast");
+  let toastTimer = null;
+  function showToast(msg){
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove("show"), 1400);
+  }
+
+  // ----------------------------------------------------------------
+  // Label pemilih bentuk (gesture "V")
+  // ----------------------------------------------------------------
+  const pickerEl = document.getElementById("shapePicker");
+  const pickerIconEl = document.getElementById("pickerIcon");
+  const pickerNameEl = document.getElementById("pickerName");
+
+  function cycleSelectedShape(){
+    selectedShapeIndex = (selectedShapeIndex + 1) % SHAPE_TYPES.length;
+    selectedShapeType = SHAPE_TYPES[selectedShapeIndex];
+    pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
+    pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
+  }
+  pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
+  pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
+
+  function isVSign(lm){
+    const indexExt  = lm[8].y  < lm[6].y  - V_SIGN_MARGIN;
+    const middleExt = lm[12].y < lm[10].y - V_SIGN_MARGIN;
+    const ringCurl  = lm[16].y > lm[14].y - V_SIGN_MARGIN;
+    const pinkyCurl = lm[20].y > lm[18].y - V_SIGN_MARGIN;
+    return indexExt && middleExt && ringCurl && pinkyCurl;
+  }
+
+  // Deteksi gesture 5 Jari Dibentangkan (Open Hand / Splay)
+  function isOpenHand(lm){
+    const wrist = lm[0];
+    const mcpMiddle = lm[9];
+    const handSize = Math.max(dist2(wrist, mcpMiddle), 1e-4);
+
+    // Pastikan kelima ujung jari lurus mekar dibanding sendi bawahnya
+    const thumbExt = lm[4].y < lm[3].y;
+    const indexExt = lm[8].y < lm[6].y;
+    const middleExt = lm[12].y < lm[10].y;
+    const ringExt = lm[16].y < lm[14].y;
+    const pinkyExt = lm[20].y < lm[18].y;
+
+    // Pastikan jarak antar ujung jari cukup lebar (membentang)
+    const distThumbIndex = dist2(lm[4], lm[8]) / handSize;
+    const distIndexMiddle = dist2(lm[8], lm[12]) / handSize;
+    const distMiddleRing = dist2(lm[12], lm[16]) / handSize;
+    const distRingPinky = dist2(lm[16], lm[20]) / handSize;
+
+    const isSpread = distThumbIndex > 0.4 && distIndexMiddle > 0.35 && distMiddleRing > 0.35 && distRingPinky > 0.35;
+
+    return thumbExt && indexExt && middleExt && ringExt && pinkyExt && isSpread;
+  }
+
+  // ----------------------------------------------------------------
+  // Data tangan
+  // ----------------------------------------------------------------
+  const latestHands = {};
+
+  function dist2(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
+
+  function ensureHandState(id){
+    if (!latestHands[id]){
+      latestHands[id] = {
+        wasPinching: false, heldShapeId: null,
+        wasOpenHand: false, openHandStartTs: 0, spawnedThisOpenHand: false,
+        resizingShapeId: null, wasVSign: false,
+        lastSeen: 0, currentlyVisible: false,
+      };
+    }
+    return latestHands[id];
+  }
+
+  const landmarkSmoothers = {};
+
+  function smoothLandmarks(id, mirrored){
+    const prev = landmarkSmoothers[id];
+    if (!prev || prev.length !== mirrored.length){
+      landmarkSmoothers[id] = mirrored;
+      return mirrored;
+    }
+    const out = new Array(mirrored.length);
+    for (let i = 0; i < mirrored.length; i++){
+      out[i] = {
+        x: prev[i].x + (mirrored[i].x - prev[i].x) * LANDMARK_SMOOTH,
+        y: prev[i].y + (mirrored[i].y - prev[i].y) * LANDMARK_SMOOTH,
+        z: prev[i].z + (mirrored[i].z - prev[i].z) * LANDMARK_SMOOTH,
+      };
+    }
+    landmarkSmoothers[id] = out;
+    return out;
+  }
+
+  // ----------------------------------------------------------------
+  // MediaPipe Hands setup
+  // ----------------------------------------------------------------
+  const videoEl = document.getElementById("webcam");
+  const bootEl = document.getElementById("boot");
+  const bootCardEl = document.getElementById("bootCard");
+  const statusEl = document.getElementById("status");
+  const statusText = document.getElementById("statusText");
+  const trashEl = document.getElementById("trash");
+
+  function setStatus(state, text){
+    statusEl.classList.remove("live", "dead");
+    if (state) statusEl.classList.add(state);
+    statusText.textContent = text;
+  }
+
+  let gotFirstResult = false;
+
+  function processResults(results){
+    if (!gotFirstResult){
+      gotFirstResult = true;
+      setStatus("live", "Tracking aktif");
+      bootEl.classList.add("hidden");
+    }
+
+    const now = performance.now();
+    const seenIds = new Set();
+
+    const allLandmarks = results.landmarks || [];
+    const allHandedness = results.handednesses || [];
+
+    allLandmarks.forEach((rawLm, i) => {
+      const cat = allHandedness[i] && allHandedness[i][0];
+      let label = (cat && cat.categoryName) || ("hand" + i);
+      if (seenIds.has(label)) label = label + "_2";
+      seenIds.add(label);
+
+      const mirrored = rawLm.map(p => ({ x: 1 - p.x, y: p.y, z: p.z }));
+      const lm = smoothLandmarks(label, mirrored);
+
+      const wrist = lm[0], mcpMiddle = lm[9], thumbTip = lm[4], indexTip = lm[8];
+      const handSize = Math.max(dist2(wrist, mcpMiddle), 1e-4);
+      const pinchRatio = dist2(thumbTip, indexTip) / handSize;
+
+      const st = ensureHandState(label);
+      const threshold = st.wasPinchingRaw ? PINCH_EXIT_RATIO : PINCH_ENTER_RATIO;
+      const isPinching = pinchRatio < threshold;
+      st.wasPinchingRaw = isPinching;
+
+      st.landmarks = lm;
+      st.pinch = isPinching;
+      st.pinchPoint = [(thumbTip.x + indexTip.x) / 2, (thumbTip.y + indexTip.y) / 2];
+      st.openHand = isOpenHand(lm);
+      st.palmCenter = [lm[9].x, lm[9].y];
+      st.vSign = isVSign(lm);
+      st.lastSeen = now;
+      st.currentlyVisible = true;
+    });
+
+    for (const id in latestHands){
+      if (!seenIds.has(id)) latestHands[id].currentlyVisible = false;
+    }
+  }
+
+  function showBootError(title, detail){
+    bootCardEl.classList.add("error");
+    bootCardEl.innerHTML =
+      "<h1>⚠️ " + title + "</h1>" +
+      "<p>" + detail + "</p>";
+    bootEl.classList.remove("hidden");
+    setStatus("dead", "Gagal mengakses kamera");
+  }
+
+  const TASKS_VISION_VERSION = "0.10.14";
+  const HAND_MODEL_URL =
+    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+
+  async function createHandLandmarker(visionModule, delegate){
+    return visionModule.HandLandmarker.createFromOptions(
+      await visionModule.FilesetResolver.forVisionTasks(
+        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/wasm`
+      ),
+      {
+        baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate },
+        runningMode: "VIDEO",
+        numHands: 2,
+      }
+    );
+  }
+
+  async function initHandTracking(){
+    let visionModule;
+    try {
+      visionModule = await import(
+        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/+esm`
+      );
+    } catch (err){
+      showBootError("Library tidak termuat", "Gagal memuat MediaPipe Tasks Vision.");
+      return;
+    }
+
+    let handLandmarker;
+    try {
+      handLandmarker = await createHandLandmarker(visionModule, "GPU");
+    } catch (err){
+      try {
+        handLandmarker = await createHandLandmarker(visionModule, "CPU");
+      } catch (err2){
+        showBootError("Model gagal dimuat", err2.message || err2);
+        return;
+      }
+    }
+
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 960 }, height: { ideal: 720 } },
+        audio: false,
+      });
+    } catch (err){
+      showBootError("Kamera tidak bisa diakses", err.message || err);
+      return;
+    }
+
+    videoEl.srcObject = stream;
+    await videoEl.play();
+
+    let lastVideoTime = -1;
+    function detectLoop(){
+      requestAnimationFrame(detectLoop);
+      if (videoEl.readyState < 2) return;
+      const t = videoEl.currentTime;
+      if (t === lastVideoTime) return;
+      lastVideoTime = t;
+      const results = handLandmarker.detectForVideo(videoEl, performance.now());
+      processResults(results);
+    }
+    detectLoop();
+  }
+
+  initHandTracking();
+
+  // ----------------------------------------------------------------
+  // Logika gesture
+  // ----------------------------------------------------------------
+  function nearestFreeShape(px, py, maxDist){
+    let best = null, bestD = Infinity;
+    for (const s of shapes){
+      if (s.heldBy || s.deleting) continue;
+      const sp = normToPixel(s.nx, s.ny);
+      const d = Math.hypot(sp.x - px, sp.y - py);
+      if (d < maxDist && d < bestD){ bestD = d; best = s; }
+    }
+    return best;
+  }
+
+  function handleTwoHandResize(){
+    for (const s of shapes){
+      if (!s.heldBy || s.deleting) continue;
+      const holderId = s.heldBy;
+      const holderSt = latestHands[holderId];
+      if (!holderSt) continue;
+
+      for (const handId in latestHands){
+        if (handId === holderId) continue;
+        const st = latestHands[handId];
+        if (!st.pinch || !st.currentlyVisible || st.heldShapeId) continue;
+        if (s.resizeSession && s.resizeSession.resizerHandId === handId) continue;
+
+        if (!s.resizeSession){
+          const shapePx = normToPixel(s.nx, s.ny);
+          const handPx = normToPixel(st.pinchPoint[0], st.pinchPoint[1]);
+          const d = Math.hypot(shapePx.x - handPx.x, shapePx.y - handPx.y);
+          if (d < RESIZE_TRIGGER_RADIUS){
+            const holderPx = normToPixel(holderSt.pinchPoint[0], holderSt.pinchPoint[1]);
+            const startDist = Math.max(20, Math.hypot(holderPx.x - handPx.x, holderPx.y - handPx.y));
+            const startAngle = Math.atan2(handPx.y - holderPx.y, handPx.x - holderPx.x);
+            s.resizeSession = {
+              resizerHandId: handId, startDist, startAngle,
+              startScale: s.baseScale, startRotZ: s.group.rotation.z,
+            };
+            st.resizingShapeId = s.id;
+            showToast("Mode resize — tarik/rapatkan tangan, putar untuk memutar");
+          }
+        }
+      }
+
+      if (s.resizeSession){
+        const resizerSt = latestHands[s.resizeSession.resizerHandId];
+        const stillValid = holderSt.pinch && holderSt.currentlyVisible &&
+                            resizerSt && resizerSt.pinch && resizerSt.currentlyVisible;
+        if (!stillValid){
+          if (resizerSt) resizerSt.resizingShapeId = null;
+          s.resizeSession = null;
+          continue;
+        }
+        const holderPx = normToPixel(holderSt.pinchPoint[0], holderSt.pinchPoint[1]);
+        const resizerPx = normToPixel(resizerSt.pinchPoint[0], resizerSt.pinchPoint[1]);
+        const curDist = Math.max(20, Math.hypot(holderPx.x - resizerPx.x, holderPx.y - resizerPx.y));
+        const curAngle = Math.atan2(resizerPx.y - holderPx.y, resizerPx.x - holderPx.x);
+
+        const ratio = curDist / s.resizeSession.startDist;
+        const targetScale = clamp(s.resizeSession.startScale * ratio, MIN_SCALE, MAX_SCALE);
+        s.baseScale += (targetScale - s.baseScale) * 0.3;
+
+        const deltaAngle = curAngle - s.resizeSession.startAngle;
+        s.group.rotation.z = s.resizeSession.startRotZ + deltaAngle;
+      }
+    }
+  }
+
+  function updateGestures(){
+    const now = performance.now();
+
+    for (const handId in latestHands){
+      const st = latestHands[handId];
+
+      if (!st.lastSeen || now - st.lastSeen > HAND_TIMEOUT_MS){
+        if (st.heldShapeId){
+          const held = shapes.find(s => s.id === st.heldShapeId);
+          if (held){
+            held.heldBy = null;
+            if (held.resizeSession && held.resizeSession.resizerHandId){
+              const otherSt = latestHands[held.resizeSession.resizerHandId];
+              if (otherSt) otherSt.resizingShapeId = null;
+            }
+            held.resizeSession = null;
+          }
+          st.heldShapeId = null;
+        }
+        st.wasPinching = false;
+        st.wasOpenHand = false;
+        st.wasVSign = false;
+        continue;
+      }
+
+      // --- Gesture "V" untuk memilih bentuk ---
+      const vSignNow = !!st.vSign;
+      if (vSignNow && !st.wasVSign){
+        cycleSelectedShape();
+      }
+      st.wasVSign = vSignNow;
+
+      // --- Gesture 5 Jari Dibentangkan untuk SPAWN bentuk baru ---
+      const openHandNow = !!st.openHand;
+      const [opnx, opny] = st.palmCenter || [0.5, 0.5];
+      const oppx = normToPixel(opnx, opny);
+
+      if (openHandNow && !st.wasOpenHand){
+        st.openHandStartTs = now;
+        st.spawnedThisOpenHand = false;
+      }
+
+      if (openHandNow){
+        if (!st.spawnedThisOpenHand && !st.heldShapeId && !st.resizingShapeId){
+          // Cek apakah ada objek di dekat telapak tangan
+          const nearShape = nearestFreeShape(oppx.x, oppx.y, HOVER_RADIUS_PX);
+          if (!nearShape && (now - st.openHandStartTs) > SPAWN_HOLD_SEC * 1000){
+            spawnShape(opnx, opny);
+            st.spawnedThisOpenHand = true;
+          }
+        }
+      }
+      st.wasOpenHand = openHandNow;
+
+      // --- Gesture PINCH hanya untuk MENGAMBIL & MENGGESER ---
+      const pinchNow = !!st.pinch;
+      const [pnx, pny] = st.pinchPoint || [0.5, 0.5];
+      const ppx = normToPixel(pnx, pny);
+
+      if (pinchNow && !st.wasPinching){
+        const target = nearestFreeShape(ppx.x, ppx.y, GRAB_RADIUS_PX);
+        if (target){
+          target.heldBy = handId;
+          st.heldShapeId = target.id;
+        }
+      }
+
+      if (pinchNow){
+        if (st.heldShapeId){
+          const held = shapes.find(s => s.id === st.heldShapeId);
+          if (held){ held.nx = pnx; held.ny = pny; }
+        }
+      }
+
+      if (!pinchNow && st.wasPinching){
+        if (st.heldShapeId){
+          const held = shapes.find(s => s.id === st.heldShapeId);
+          if (held){
+            held.heldBy = null;
+            if (held.resizeSession && held.resizeSession.resizerHandId){
+              const otherSt = latestHands[held.resizeSession.resizerHandId];
+              if (otherSt) otherSt.resizingShapeId = null;
+            }
+            held.resizeSession = null;
+            if (isInTrashZone(held.nx, held.ny)) removeShape(held);
+          }
+          st.heldShapeId = null;
+        }
+        if (st.resizingShapeId){
+          const s2 = shapes.find(sh => sh.id === st.resizingShapeId);
+          if (s2 && s2.resizeSession && s2.resizeSession.resizerHandId === handId){
+            s2.resizeSession = null;
+          }
+          st.resizingShapeId = null;
+        }
+      }
+
+      st.wasPinching = pinchNow;
+    }
+
+    handleTwoHandResize();
+
+    let armed = false;
+    for (const s of shapes){
+      if (s.heldBy && isInTrashZone(s.nx, s.ny)){ armed = true; break; }
+    }
+    trashEl.classList.toggle("armed", armed);
+
+    let showPicker = false;
+    for (const handId in latestHands){
+      const st = latestHands[handId];
+      if (st.vSign && st.currentlyVisible && st.landmarks){
+        const tip = st.landmarks[8];
+        const px = normToPixel(tip.x, tip.y);
+        pickerEl.style.left = px.x + "px";
+        pickerEl.style.top = (px.y - 20) + "px";
+        showPicker = true;
+        break;
+      }
+    }
+    pickerEl.classList.toggle("show", showPicker);
+  }
+
+  // ----------------------------------------------------------------
+  // Render loop
+  // ----------------------------------------------------------------
+  let lastT = performance.now();
+
+  function animate(){
+    requestAnimationFrame(animate);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastT) / 1000);
+    lastT = now;
+
+    updateGestures();
+
+    for (const s of shapes){
+      if (s.deleting) continue;
+
+      const targetPos = screenToWorld(s.nx, s.ny, 0);
+      const lerpFactor = s.heldBy ? POS_LERP : IDLE_LERP;
+      s.group.position.lerp(targetPos, lerpFactor);
+
+      s.group.rotation.y += s.rotSpeed * dt;
+      s.group.rotation.x += s.rotSpeed * 0.4 * dt;
+
+      if (!s.heldBy){
+        s.bobPhase += dt * 1.6;
+        s.group.position.y += Math.sin(s.bobPhase) * 0.004;
+      }
+
+      let nearFinger = false;
+      const sp = normToPixel(s.nx, s.ny);
+      for (const handId in latestHands){
+        const st = latestHands[handId];
+        if (!st.pinchPoint) continue;
+        const pp = normToPixel(st.pinchPoint[0], st.pinchPoint[1]);
+        if (Math.hypot(pp.x - sp.x, pp.y - sp.y) < HOVER_RADIUS_PX){ nearFinger = true; break; }
+      }
+      const pulseTarget = s.heldBy ? 1.08 : (nearFinger ? 1.05 : 1.0);
+      const desired = s.baseScale * pulseTarget;
+      const growSpeed = s.displayScale < desired * 0.5 ? 0.22 : 0.18;
+      s.displayScale += (desired - s.displayScale) * growSpeed;
+      s.group.scale.setScalar(Math.max(0.0001, s.displayScale));
+    }
+
+    const visibleIds = new Set();
+    for (const handId in latestHands){
+      const st = latestHands[handId];
+      if (!st.landmarks || !st.currentlyVisible) continue;
+      visibleIds.add(handId);
+      const dots = getFingerDots(handId);
+      FINGER_TIP_IDX.forEach((lmIdx, i) => {
+        const lm = st.landmarks[lmIdx];
+        if (!lm) return;
+        const d = dots[i];
+        if (d.curNx === null){ d.curNx = lm.x; d.curNy = lm.y; }
+        else {
+          d.curNx += (lm.x - d.curNx) * DOT_LERP;
+          d.curNy += (lm.y - d.curNy) * DOT_LERP;
+        }
+        const wp = screenToWorld(d.curNx, d.curNy, 0.15);
+        d.mesh.position.copy(wp);
+        d.mesh.visible = true;
+        const isPinchTip = (lmIdx === 4 || lmIdx === 8) && st.pinch;
+        d.mesh.material.color.setHex(isPinchTip ? PINCH_COLOR : FINGERTIP_COLOR);
+        d.mesh.scale.setScalar(isPinchTip ? 1.3 : 1.0);
+      });
+    }
+    hideAllDots(visibleIds);
+
+    // Animasi spawn ring saat menggunakan gesture 5 Jari Dibentangkan
+    const ringVisibleIds = new Set();
+    for (const handId in latestHands){
+      const st = latestHands[handId];
+      if (st.openHand && !st.spawnedThisOpenHand && !st.heldShapeId && !st.resizingShapeId && st.palmCenter && st.currentlyVisible){
+        const oppx = normToPixel(st.palmCenter[0], st.palmCenter[1]);
+        const nearShape = nearestFreeShape(oppx.x, oppx.y, HOVER_RADIUS_PX);
+        if (!nearShape){
+          ringVisibleIds.add(handId);
+          const progress = Math.min(1, (now - st.openHandStartTs) / (SPAWN_HOLD_SEC * 1000));
+          const ring = getSpawnRing(handId);
+          const wp = screenToWorld(st.palmCenter[0], st.palmCenter[1], 0.1);
+          ring.position.copy(wp);
+          ring.lookAt(camera.position);
+          ring.scale.setScalar(0.5 + progress * 0.9);
+          ring.material.opacity = 0.25 + progress * 0.55;
+          ring.visible = true;
+        }
+      }
+    }
+    hideAllSpawnRings(ringVisibleIds);
+
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key.toLowerCase() === "c"){
+      shapes.slice().forEach(removeShape);
+      showToast("Semua bentuk dibersihkan");
+    }
+  });
+
+})();
+</script>
+</body>
+</html>
