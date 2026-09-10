@@ -29,7 +29,7 @@ macet di layar loading, pindah ke cara server lokal di atas.)
 
 | Gesture | Efek |
 |---|---|
-| 🫰 Jentikkan jari (jempol + jari tengah dirapatkan lalu dilepas cepat) | Memunculkan bentuk baru di posisi jentikan, sesuai jenis yang sedang dipilih |
+| 👍 Kepalkan tangan lalu acungkan jempol ke atas | Memunculkan bentuk baru di posisi ujung jempol, sesuai jenis yang sedang dipilih |
 | 🤏 Pinch (jempol + telunjuk) di atas sebuah bentuk | Ambil & geser bentuk, mengikuti jari secara halus |
 | 🤏🤏 Pegang bentuk dengan satu tangan, lalu pinch juga dengan tangan satunya di dekat bentuk itu | **Resize & rotate**: tarik tangan menjauh = besar, dekatkan = kecil, putar tangan = memutar bentuknya |
 | ✌️ Bentuk gesture "V" (telunjuk + jari tengah, lainnya dilipat) | Ganti jenis bentuk berikutnya yang akan dibuat (bola → kubus → kerucut → piramida → tabung → donat → ulang) — muncul label mengambang menunjukkan pilihan saat ini |
