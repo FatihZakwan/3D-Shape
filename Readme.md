@@ -60,3 +60,5 @@ hand_gesture_3d/
 ├── requirements.txt      # (arsip, tidak dipakai lagi di versi ini)
 └── README.md
 ```
+
+Silakan dicoba
