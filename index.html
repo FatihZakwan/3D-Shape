@@ -34,7 +34,8 @@
     filter: saturate(1.05) contrast(1.02);
   }
 
-  /* Kanvas Three.js transparan di atas video. */
+  /* Kanvas Three.js transparan di atas video. TIDAK di-mirror -
+     karena koordinat landmark sudah kita balik sendiri di JS (mx = 1 - x). */
   #gl{
     position:absolute; inset:0;
     width:100%; height:100%;
@@ -81,7 +82,7 @@
     background: var(--panel);
     border: 1px solid var(--line);
     backdrop-filter: blur(8px);
-    max-width: 340px;
+    max-width: 320px;
     font-size: 12.5px;
     line-height: 1.6;
     color: var(--muted);
@@ -132,7 +133,7 @@
     white-space:nowrap;
   }
 
-  /* Label pemilih bentuk */
+  /* Label pemilih bentuk, muncul mengambang di dekat tangan saat gesture "V" */
   #shapePicker{
     position:absolute; top:0; left:0;
     padding: 8px 14px;
@@ -172,10 +173,10 @@
   <canvas id="gl"></canvas>
 
   <div id="hud">
-    <div class="row"><span class="tag">🖐️</span><div>Bentangkan <b>5 Jari</b> di ruang kosong untuk memunculkan bentuk baru.</div></div>
-    <div class="row"><span class="tag">🤏</span><div><b>Pinch/Cubit</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
-    <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch pakai tangan satunya untuk <b>resize &amp; putar</b>.</div></div>
-    <div class="row"><span class="tag">✌️</span><div>Bentuk gesture <b>"V"</b> untuk memilih jenis bentuk berikutnya.</div></div>
+    <div class="row"><span class="tag">🫰</span><div><b>Jentikkan jari</b> (jempol + jari tengah) untuk memunculkan bentuk baru.</div></div>
+    <div class="row"><span class="tag">🤏</span><div><b>Pinch</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
+    <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch juga pakai tangan satunya di dekatnya untuk <b>resize &amp; putar</b> (tarik = besar, dekatkan = kecil).</div></div>
+    <div class="row"><span class="tag">✌️</span><div>Bentuk gesture <b>"V"</b> (telunjuk+tengah) untuk memilih jenis bentuk berikutnya.</div></div>
     <div class="row"><span class="tag">🗑️</span><div>Lepas pinch di atas tempat sampah untuk <b>menghapus</b>.</div></div>
   </div>
 
@@ -197,9 +198,9 @@
     <div class="boot-card" id="bootCard">
       <h1><span class="dot-pulse"></span>Menyiapkan kamera &amp; MediaPipe...</h1>
       <p>Browser akan meminta izin akses kamera — klik <b>Allow</b> saat muncul.</p>
-      <p>Jalankan server lokal jika membuka dari lokal:</p>
-      <p><code>python -m http.server 8666</code></p>
-      <p>lalu buka <code>http://localhost:8666/index.html</code>.</p>
+      <p>Kalau ini tidak jalan lebih dari beberapa detik, kemungkinan halamannya dibuka langsung dari file (<code>file://</code>). Jalankan server lokal dulu:</p>
+      <p><code>python -m http.server 8000</code></p>
+      <p>lalu buka <code>http://localhost:8000/index.html</code>.</p>
     </div>
   </div>
 </div>
@@ -219,20 +220,19 @@
   const GRAB_RADIUS_PX = 100;
   const HOVER_RADIUS_PX = 150;
   const RESIZE_TRIGGER_RADIUS = 260;
-  const SPAWN_HOLD_SEC = 0.35;
   const MIN_SCALE = 0.35;
   const MAX_SCALE = 3.2;
 
   const POS_LERP = 0.4;
   const IDLE_LERP = 0.14;
-  const DOT_LERP = 0.85;
-  const LANDMARK_SMOOTH = 0.75;
+  const DOT_LERP = 0.85;          // lebih tinggi = titik lebih "nempel" & responsif ke gerakan jari
+  const LANDMARK_SMOOTH = 0.75;   // smoothing landmark mentah dari MediaPipe (0=diam, 1=tanpa smoothing)
   const HAND_TIMEOUT_MS = 300;
 
   const PINCH_ENTER_RATIO = 0.35;
   const PINCH_EXIT_RATIO = 0.55;
 
-  const V_SIGN_MARGIN = 0.02;
+  const V_SIGN_MARGIN = 0.02;     // toleransi perbandingan y antar sendi jari
 
   const TRASH_ZONE = { xMin: 0.72, yMin: 0.62 };
 
@@ -420,28 +420,8 @@
     }
   }
 
-  const spawnRingPool = {};
-  function getSpawnRing(handId){
-    if (!spawnRingPool[handId]){
-      const mesh = new THREE.Mesh(
-        new THREE.RingGeometry(0.26, 0.33, 32),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false })
-      );
-      mesh.visible = false;
-      scene.add(mesh);
-      spawnRingPool[handId] = mesh;
-    }
-    return spawnRingPool[handId];
-  }
-  function hideAllSpawnRings(exceptIds){
-    for (const id in spawnRingPool){
-      if (exceptIds && exceptIds.has(id)) continue;
-      spawnRingPool[id].visible = false;
-    }
-  }
-
   // ----------------------------------------------------------------
-  // Toast
+  // Toast kecil
   // ----------------------------------------------------------------
   const toastEl = document.getElementById("toast");
   let toastTimer = null;
@@ -465,6 +445,7 @@
     pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
     pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
   }
+  // set label awal
   pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
   pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
 
@@ -476,34 +457,17 @@
     return indexExt && middleExt && ringCurl && pinkyCurl;
   }
 
-  // Deteksi gesture 5 Jari Dibentangkan (Open Hand / Splay)
-  function isOpenHand(lm){
-    const wrist = lm[0];
-    const mcpMiddle = lm[9];
-    const handSize = Math.max(dist2(wrist, mcpMiddle), 1e-4);
-
-    // Pastikan kelima ujung jari lurus mekar dibanding sendi bawahnya
-    const thumbExt = lm[4].y < lm[3].y;
-    const indexExt = lm[8].y < lm[6].y;
-    const middleExt = lm[12].y < lm[10].y;
-    const ringExt = lm[16].y < lm[14].y;
-    const pinkyExt = lm[20].y < lm[18].y;
-
-    // Pastikan jarak antar ujung jari cukup lebar (membentang)
-    const distThumbIndex = dist2(lm[4], lm[8]) / handSize;
-    const distIndexMiddle = dist2(lm[8], lm[12]) / handSize;
-    const distMiddleRing = dist2(lm[12], lm[16]) / handSize;
-    const distRingPinky = dist2(lm[16], lm[20]) / handSize;
-
-    const isSpread = distThumbIndex > 0.4 && distIndexMiddle > 0.35 && distMiddleRing > 0.35 && distRingPinky > 0.35;
-
-    return thumbExt && indexExt && middleExt && ringExt && pinkyExt && isSpread;
-  }
+  // Konfigurasi deteksi "jentikan jari" (snap): thumb + jari tengah
+  // dirapatkan dulu (armed), lalu dilepas cepat dalam jendela waktu tertentu.
+  const SNAP_ARM_RATIO = 0.4;      // di bawah ini dianggap "siap" (dirapatkan)
+  const SNAP_RELEASE_RATIO = 0.85; // di atas ini setelah armed dianggap "lepas" (snap!)
+  const SNAP_MIN_MS = 40;          // minimal jeda biar bukan noise 1 frame
+  const SNAP_MAX_MS = 450;         // maksimal jeda antara armed & lepas biar dianggap snap
 
   // ----------------------------------------------------------------
-  // Data tangan
+  // Data tangan (diisi oleh MediaPipe, dibaca oleh loop render)
   // ----------------------------------------------------------------
-  const latestHands = {};
+  const latestHands = {}; // key: "Left"/"Right" -> state
 
   function dist2(a, b){ return Math.hypot(a.x - b.x, a.y - b.y); }
 
@@ -511,15 +475,40 @@
     if (!latestHands[id]){
       latestHands[id] = {
         wasPinching: false, heldShapeId: null,
-        wasOpenHand: false, openHandStartTs: 0, spawnedThisOpenHand: false,
         resizingShapeId: null, wasVSign: false,
+        snapArmed: false, snapArmedAt: 0, snapPos: null,
         lastSeen: 0, currentlyVisible: false,
       };
     }
     return latestHands[id];
   }
 
-  const landmarkSmoothers = {};
+  // Dipanggil tiap frame per tangan: mendeteksi transisi "rapat -> lepas cepat" = snap
+  function updateSnapGesture(st, now){
+    if (st.heldShapeId || st.resizingShapeId || st.thumbMiddleRatio === undefined){
+      st.snapArmed = false;
+      return;
+    }
+    const ratio = st.thumbMiddleRatio;
+    if (!st.snapArmed){
+      if (ratio < SNAP_ARM_RATIO){
+        st.snapArmed = true;
+        st.snapArmedAt = now;
+        st.snapPos = st.thumbMiddlePoint ? st.thumbMiddlePoint.slice() : [0.5, 0.5];
+      }
+    } else {
+      const dt = now - st.snapArmedAt;
+      if (dt > SNAP_MAX_MS){
+        st.snapArmed = false; // kelamaan, batal (bukan snap, cuma nempel santai)
+      } else if (ratio > SNAP_RELEASE_RATIO && dt >= SNAP_MIN_MS){
+        const [px, py] = st.snapPos || [0.5, 0.5];
+        spawnShape(px, py);
+        st.snapArmed = false;
+      }
+    }
+  }
+
+  const landmarkSmoothers = {}; // key: id -> array titik sebelumnya (sudah di-mirror)
 
   function smoothLandmarks(id, mirrored){
     const prev = landmarkSmoothers[id];
@@ -540,7 +529,9 @@
   }
 
   // ----------------------------------------------------------------
-  // MediaPipe Hands setup
+  // MediaPipe Hands setup — pakai Tasks Vision API (lebih baru & jauh
+  // lebih responsif daripada @mediapipe/hands versi lama, bisa pakai
+  // akselerasi GPU langsung di browser).
   // ----------------------------------------------------------------
   const videoEl = document.getElementById("webcam");
   const bootEl = document.getElementById("boot");
@@ -557,6 +548,8 @@
 
   let gotFirstResult = false;
 
+  // results.landmarks: array per tangan, tiap tangan array 21 titik {x,y,z} (0..1)
+  // results.handednesses: array per tangan, tiap tangan array kategori [{categoryName:"Left"/"Right", score}]
   function processResults(results){
     if (!gotFirstResult){
       gotFirstResult = true;
@@ -576,12 +569,14 @@
       if (seenIds.has(label)) label = label + "_2";
       seenIds.add(label);
 
+      // mirror x supaya sesuai dengan video yang ditampilkan terbalik (CSS scaleX(-1))
       const mirrored = rawLm.map(p => ({ x: 1 - p.x, y: p.y, z: p.z }));
       const lm = smoothLandmarks(label, mirrored);
 
-      const wrist = lm[0], mcpMiddle = lm[9], thumbTip = lm[4], indexTip = lm[8];
+      const wrist = lm[0], mcpMiddle = lm[9], thumbTip = lm[4], indexTip = lm[8], middleTip = lm[12];
       const handSize = Math.max(dist2(wrist, mcpMiddle), 1e-4);
       const pinchRatio = dist2(thumbTip, indexTip) / handSize;
+      const thumbMiddleRatio = dist2(thumbTip, middleTip) / handSize;
 
       const st = ensureHandState(label);
       const threshold = st.wasPinchingRaw ? PINCH_EXIT_RATIO : PINCH_ENTER_RATIO;
@@ -591,9 +586,9 @@
       st.landmarks = lm;
       st.pinch = isPinching;
       st.pinchPoint = [(thumbTip.x + indexTip.x) / 2, (thumbTip.y + indexTip.y) / 2];
-      st.openHand = isOpenHand(lm);
-      st.palmCenter = [lm[9].x, lm[9].y];
       st.vSign = isVSign(lm);
+      st.thumbMiddleRatio = thumbMiddleRatio;
+      st.thumbMiddlePoint = [(thumbTip.x + middleTip.x) / 2, (thumbTip.y + middleTip.y) / 2];
       st.lastSeen = now;
       st.currentlyVisible = true;
     });
@@ -607,7 +602,10 @@
     bootCardEl.classList.add("error");
     bootCardEl.innerHTML =
       "<h1>⚠️ " + title + "</h1>" +
-      "<p>" + detail + "</p>";
+      "<p>" + detail + "</p>" +
+      "<p>Kalau kamu membuka file ini langsung dari <code>file://</code>, coba jalankan server lokal:</p>" +
+      "<p><code>python -m http.server 8000</code></p>" +
+      "<p>lalu buka <code>http://localhost:8000/index.html</code> dan izinkan akses kamera saat diminta.</p>";
     bootEl.classList.remove("hidden");
     setStatus("dead", "Gagal mengakses kamera");
   }
@@ -636,7 +634,10 @@
         `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/+esm`
       );
     } catch (err){
-      showBootError("Library tidak termuat", "Gagal memuat MediaPipe Tasks Vision.");
+      showBootError(
+        "Library tidak termuat",
+        "Gagal memuat MediaPipe Tasks Vision dari CDN. Cek koneksi internetmu, lalu refresh halaman ini."
+      );
       return;
     }
 
@@ -644,10 +645,14 @@
     try {
       handLandmarker = await createHandLandmarker(visionModule, "GPU");
     } catch (err){
+      // beberapa perangkat/driver tidak mendukung delegate GPU, fallback ke CPU
       try {
         handLandmarker = await createHandLandmarker(visionModule, "CPU");
       } catch (err2){
-        showBootError("Model gagal dimuat", err2.message || err2);
+        showBootError(
+          "Model gagal dimuat",
+          "Pesan error: " + (err2 && err2.message ? err2.message : err2)
+        );
         return;
       }
     }
@@ -659,7 +664,11 @@
         audio: false,
       });
     } catch (err){
-      showBootError("Kamera tidak bisa diakses", err.message || err);
+      showBootError(
+        "Kamera tidak bisa diakses",
+        "Pesan error: " + (err && err.message ? err.message : err) +
+        ". Pastikan tidak ada aplikasi lain yang memakai webcam, dan izin kamera browser sudah diizinkan."
+      );
       return;
     }
 
@@ -671,7 +680,7 @@
       requestAnimationFrame(detectLoop);
       if (videoEl.readyState < 2) return;
       const t = videoEl.currentTime;
-      if (t === lastVideoTime) return;
+      if (t === lastVideoTime) return; // belum ada frame video baru, skip
       lastVideoTime = t;
       const results = handLandmarker.detectForVideo(videoEl, performance.now());
       processResults(results);
@@ -682,7 +691,7 @@
   initHandTracking();
 
   // ----------------------------------------------------------------
-  // Logika gesture
+  // Logika gesture (dipanggil tiap frame render)
   // ----------------------------------------------------------------
   function nearestFreeShape(px, py, maxDist){
     let best = null, bestD = Infinity;
@@ -770,41 +779,21 @@
           st.heldShapeId = null;
         }
         st.wasPinching = false;
-        st.wasOpenHand = false;
         st.wasVSign = false;
+        st.snapArmed = false;
         continue;
       }
 
-      // --- Gesture "V" untuk memilih bentuk ---
+      // --- gesture "V" untuk memilih jenis bentuk berikutnya ---
       const vSignNow = !!st.vSign;
       if (vSignNow && !st.wasVSign){
         cycleSelectedShape();
       }
       st.wasVSign = vSignNow;
 
-      // --- Gesture 5 Jari Dibentangkan untuk SPAWN bentuk baru ---
-      const openHandNow = !!st.openHand;
-      const [opnx, opny] = st.palmCenter || [0.5, 0.5];
-      const oppx = normToPixel(opnx, opny);
+      // --- gesture jentikan jari (snap) untuk memunculkan bentuk ---
+      updateSnapGesture(st, now);
 
-      if (openHandNow && !st.wasOpenHand){
-        st.openHandStartTs = now;
-        st.spawnedThisOpenHand = false;
-      }
-
-      if (openHandNow){
-        if (!st.spawnedThisOpenHand && !st.heldShapeId && !st.resizingShapeId){
-          // Cek apakah ada objek di dekat telapak tangan
-          const nearShape = nearestFreeShape(oppx.x, oppx.y, HOVER_RADIUS_PX);
-          if (!nearShape && (now - st.openHandStartTs) > SPAWN_HOLD_SEC * 1000){
-            spawnShape(opnx, opny);
-            st.spawnedThisOpenHand = true;
-          }
-        }
-      }
-      st.wasOpenHand = openHandNow;
-
-      // --- Gesture PINCH hanya untuk MENGAMBIL & MENGGESER ---
       const pinchNow = !!st.pinch;
       const [pnx, pny] = st.pinchPoint || [0.5, 0.5];
       const ppx = normToPixel(pnx, pny);
@@ -817,11 +806,9 @@
         }
       }
 
-      if (pinchNow){
-        if (st.heldShapeId){
-          const held = shapes.find(s => s.id === st.heldShapeId);
-          if (held){ held.nx = pnx; held.ny = pny; }
-        }
+      if (pinchNow && st.heldShapeId){
+        const held = shapes.find(s => s.id === st.heldShapeId);
+        if (held){ held.nx = pnx; held.ny = pny; }
       }
 
       if (!pinchNow && st.wasPinching){
@@ -858,6 +845,7 @@
     }
     trashEl.classList.toggle("armed", armed);
 
+    // Posisikan label pemilih bentuk di dekat tangan yang sedang gesture "V"
     let showPicker = false;
     for (const handId in latestHands){
       const st = latestHands[handId];
@@ -940,28 +928,6 @@
       });
     }
     hideAllDots(visibleIds);
-
-    // Animasi spawn ring saat menggunakan gesture 5 Jari Dibentangkan
-    const ringVisibleIds = new Set();
-    for (const handId in latestHands){
-      const st = latestHands[handId];
-      if (st.openHand && !st.spawnedThisOpenHand && !st.heldShapeId && !st.resizingShapeId && st.palmCenter && st.currentlyVisible){
-        const oppx = normToPixel(st.palmCenter[0], st.palmCenter[1]);
-        const nearShape = nearestFreeShape(oppx.x, oppx.y, HOVER_RADIUS_PX);
-        if (!nearShape){
-          ringVisibleIds.add(handId);
-          const progress = Math.min(1, (now - st.openHandStartTs) / (SPAWN_HOLD_SEC * 1000));
-          const ring = getSpawnRing(handId);
-          const wp = screenToWorld(st.palmCenter[0], st.palmCenter[1], 0.1);
-          ring.position.copy(wp);
-          ring.lookAt(camera.position);
-          ring.scale.setScalar(0.5 + progress * 0.9);
-          ring.material.opacity = 0.25 + progress * 0.55;
-          ring.visible = true;
-        }
-      }
-    }
-    hideAllSpawnRings(ringVisibleIds);
 
     renderer.render(scene, camera);
   }
