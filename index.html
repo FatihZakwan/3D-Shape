@@ -173,7 +173,8 @@
   <canvas id="gl"></canvas>
 
   <div id="hud">
-    <div class="row"><span class="tag">🖖</span><div>Bentangkan <b>3 jari</b> (telunjuk+tengah+manis) untuk memunculkan bentuk baru — cukup sekali ayun, tidak akan spam walau ditahan.</div></div>
+    <div class="row"><span class="tag">✌️👇</span><div>Angkat telunjuk+tengah, lalu <b>turunkan keduanya bersamaan</b> untuk ganti jenis bentuk.</div></div>
+    <div class="row"><span class="tag">💍👆</span><div>Dari posisi itu, <b>ayunkan jari manis ke atas</b> untuk memunculkan bentuk — ayun turun-naik lagi untuk memunculkan lagi.</div></div>
     <div class="row"><span class="tag">🤏</span><div><b>Pinch</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
     <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch juga pakai tangan satunya di dekatnya untuk <b>resize &amp; putar</b> (tarik = besar, dekatkan = kecil).</div></div>
     <div class="row"><span class="tag">✌️</span><div>Bentuk gesture <b>"V"</b> (telunjuk+tengah) untuk memilih jenis bentuk berikutnya.</div></div>
@@ -449,23 +450,15 @@
   pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
   pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
 
-  function isVSign(lm){
-    const indexExt  = lm[8].y  < lm[6].y  - V_SIGN_MARGIN;
-    const middleExt = lm[12].y < lm[10].y - V_SIGN_MARGIN;
-    const ringCurl  = lm[16].y > lm[14].y - V_SIGN_MARGIN;
-    const pinkyCurl = lm[20].y > lm[18].y - V_SIGN_MARGIN;
-    return indexExt && middleExt && ringCurl && pinkyCurl;
-  }
-
-  // "W-sign": telunjuk + tengah + manis tegak, kelingking terlipat.
-  // Sengaja dibuat supaya TIDAK pernah nyala bareng V-sign (V-sign
-  // mensyaratkan jari manis terlipat, ini mensyaratkan jari manis tegak).
-  function isThreeFingerSign(lm){
-    const indexExt  = lm[8].y  < lm[6].y  - V_SIGN_MARGIN;
-    const middleExt = lm[12].y < lm[10].y - V_SIGN_MARGIN;
-    const ringExt   = lm[16].y < lm[14].y - V_SIGN_MARGIN;
-    const pinkyCurl = lm[20].y > lm[18].y - V_SIGN_MARGIN;
-    return indexExt && middleExt && ringExt && pinkyCurl;
+  // Status "tegak/tertekuk" tiap jari (dipakai untuk deteksi TRANSISI,
+  // bukan pose diam) — supaya "V turun jadi W lalu balik ke V" tidak
+  // ke-baca sebagai V-sign statis.
+  function fingerExtFlags(lm){
+    return {
+      index:  lm[8].y  < lm[6].y  - V_SIGN_MARGIN,
+      middle: lm[12].y < lm[10].y - V_SIGN_MARGIN,
+      ring:   lm[16].y < lm[14].y - V_SIGN_MARGIN,
+    };
   }
 
   // ----------------------------------------------------------------
@@ -479,7 +472,8 @@
     if (!latestHands[id]){
       latestHands[id] = {
         wasPinching: false, heldShapeId: null,
-        resizingShapeId: null, wasVSign: false, wasSpawnSign: false,
+        resizingShapeId: null,
+        prevFingerFlags: { index: false, middle: false, ring: false },
         lastSeen: 0, currentlyVisible: false,
       };
     }
@@ -563,8 +557,6 @@
       st.landmarks = lm;
       st.pinch = isPinching;
       st.pinchPoint = [(thumbTip.x + indexTip.x) / 2, (thumbTip.y + indexTip.y) / 2];
-      st.vSign = isVSign(lm);
-      st.spawnSign = isThreeFingerSign(lm);
       st.lastSeen = now;
       st.currentlyVisible = true;
     });
@@ -755,29 +747,32 @@
           st.heldShapeId = null;
         }
         st.wasPinching = false;
-        st.wasVSign = false;
-        st.wasSpawnSign = false;
+        st.prevFingerFlags = { index: false, middle: false, ring: false };
         continue;
       }
 
-      // --- gesture "V" untuk memilih jenis bentuk berikutnya ---
-      const vSignNow = !!st.vSign;
-      if (vSignNow && !st.wasVSign){
-        cycleSelectedShape();
-      }
-      st.wasVSign = vSignNow;
+      // --- Deteksi transisi jari: ganti mode & summon bentuk ---
+      if (st.landmarks){
+        const flags = fingerExtFlags(st.landmarks);
+        const prev = st.prevFingerFlags || { index: false, middle: false, ring: false };
 
-      // --- gesture "W" (telunjuk+tengah+manis) untuk memunculkan bentuk ---
-      // Edge-triggered: cuma nyala SEKALI tiap kali gesture baru terbentuk,
-      // walau posenya ditahan lama tidak akan spawn berulang-ulang.
-      const spawnSignNow = !!st.spawnSign;
-      if (spawnSignNow && !st.wasSpawnSign && st.landmarks){
-        const i8 = st.landmarks[8], i12 = st.landmarks[12], i16 = st.landmarks[16];
-        const px = (i8.x + i12.x + i16.x) / 3;
-        const py = (i8.y + i12.y + i16.y) / 3;
-        spawnShape(px, py);
+        // Ganti mode: telunjuk & tengah DITURUNKAN BERSAMAAN
+        // (sebelumnya sama-sama tegak, sekarang sama-sama tertekuk)
+        if (prev.index && prev.middle && !flags.index && !flags.middle){
+          cycleSelectedShape();
+        }
+
+        // Summon bentuk: jari manis diayun ke atas (tertekuk -> tegak),
+        // hanya dihitung kalau telunjuk & tengah sedang tegak (posisi V/W).
+        if (flags.ring && !prev.ring && flags.index && flags.middle){
+          const i8 = st.landmarks[8], i12 = st.landmarks[12], i16 = st.landmarks[16];
+          const px = (i8.x + i12.x + i16.x) / 3;
+          const py = (i8.y + i12.y + i16.y) / 3;
+          spawnShape(px, py);
+        }
+
+        st.prevFingerFlags = flags;
       }
-      st.wasSpawnSign = spawnSignNow;
 
       const pinchNow = !!st.pinch;
       const [pnx, pny] = st.pinchPoint || [0.5, 0.5];
@@ -830,11 +825,12 @@
     }
     trashEl.classList.toggle("armed", armed);
 
-    // Posisikan label pemilih bentuk di dekat tangan yang sedang gesture "V"
+    // Posisikan label pemilih bentuk di dekat tangan yang sedang telunjuk+tengah tegak
     let showPicker = false;
     for (const handId in latestHands){
       const st = latestHands[handId];
-      if (st.vSign && st.currentlyVisible && st.landmarks){
+      const flags = st.prevFingerFlags;
+      if (flags && flags.index && flags.middle && st.currentlyVisible && st.landmarks){
         const tip = st.landmarks[8];
         const px = normToPixel(tip.x, tip.y);
         pickerEl.style.left = px.x + "px";
