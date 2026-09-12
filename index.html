@@ -173,7 +173,7 @@
   <canvas id="gl"></canvas>
 
   <div id="hud">
-    <div class="row"><span class="tag">✌️👇</span><div>Angkat telunjuk+tengah, lalu <b>turunkan keduanya bersamaan</b> untuk ganti jenis bentuk.</div></div>
+    <div class="row"><span class="tag">✌️👇</span><div>Dari telunjuk+tengah tegak, turunkan <b>salah satu saja</b> (telunjuk atau tengah) untuk ganti jenis bentuk.</div></div>
     <div class="row"><span class="tag">💍👆</span><div>Dari posisi itu, <b>ayunkan jari manis ke atas</b> untuk memunculkan bentuk — ayun turun-naik lagi untuk memunculkan lagi.</div></div>
     <div class="row"><span class="tag">🤏</span><div><b>Pinch</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
     <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch juga pakai tangan satunya di dekatnya untuk <b>resize &amp; putar</b> (tarik = besar, dekatkan = kecil).</div></div>
@@ -756,15 +756,21 @@
         const flags = fingerExtFlags(st.landmarks);
         const prev = st.prevFingerFlags || { index: false, middle: false, ring: false };
 
-        // Ganti mode: telunjuk & tengah DITURUNKAN BERSAMAAN
-        // (sebelumnya sama-sama tegak, sekarang sama-sama tertekuk)
-        if (prev.index && prev.middle && !flags.index && !flags.middle){
+        const ringRisingNow = flags.ring && !prev.ring;
+
+        // Ganti mode: telunjuk ATAU tengah diturunkan (salah satu saja cukup).
+        // Dikecualikan kalau momen ini jari manis sedang naik (itu summon,
+        // bukan niat ganti mode) — mencegah salah baca kalau jari manis naik
+        // membuat telunjuk/tengah ikut sedikit turun karena keterbatasan fisik jari.
+        const indexLowered = prev.index && !flags.index;
+        const middleLowered = prev.middle && !flags.middle;
+        if ((indexLowered || middleLowered) && !ringRisingNow){
           cycleSelectedShape();
         }
 
         // Summon bentuk: jari manis diayun ke atas (tertekuk -> tegak),
         // hanya dihitung kalau telunjuk & tengah sedang tegak (posisi V/W).
-        if (flags.ring && !prev.ring && flags.index && flags.middle){
+        if (ringRisingNow && flags.index && flags.middle){
           const i8 = st.landmarks[8], i12 = st.landmarks[12], i16 = st.landmarks[16];
           const px = (i8.x + i12.x + i16.x) / 3;
           const py = (i8.y + i12.y + i16.y) / 3;
