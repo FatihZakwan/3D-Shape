@@ -37,7 +37,7 @@ JPEG_QUALITY = 60      # lebih kecil = lebih ringan tapi kurang tajam
 TARGET_FPS = 24
 
 WS_HOST = "localhost"
-WS_PORT = 8666
+WS_PORT = 8765
 
 # Ambang batas pinch (rasio jarak jempol-telunjuk terhadap ukuran tangan).
 # Dibuat dua ambang (hysteresis) biar status pinch tidak "kedip-kedip".
