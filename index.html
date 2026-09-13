@@ -173,11 +173,9 @@
   <canvas id="gl"></canvas>
 
   <div id="hud">
-    <div class="row"><span class="tag">✌️👇</span><div>Dari telunjuk+tengah tegak, turunkan <b>salah satu saja</b> (telunjuk atau tengah) untuk ganti jenis bentuk.</div></div>
-    <div class="row"><span class="tag">💍👆</span><div>Dari posisi itu, <b>ayunkan jari manis ke atas</b> untuk memunculkan bentuk — ayun turun-naik lagi untuk memunculkan lagi.</div></div>
+    <div class="row"><span class="tag">🖐️</span><div>Tiap jari punya <b>bentuknya sendiri</b> — tegakkan satu jari untuk memunculkannya: 👍 Bola · ☝️ Kubus · 🖕 Kerucut · 💍 Piramida · 🤙 Tabung.</div></div>
     <div class="row"><span class="tag">🤏</span><div><b>Pinch</b> di dekat bentuk untuk mengambil &amp; menggesernya.</div></div>
     <div class="row"><span class="tag">🤏🤏</span><div>Pegang bentuk lalu pinch juga pakai tangan satunya di dekatnya untuk <b>resize &amp; putar</b> (tarik = besar, dekatkan = kecil).</div></div>
-    <div class="row"><span class="tag">✌️</span><div>Bentuk gesture <b>"V"</b> (telunjuk+tengah) untuk memilih jenis bentuk berikutnya.</div></div>
     <div class="row"><span class="tag">🗑️</span><div>Lepas pinch di atas tempat sampah untuk <b>menghapus</b>.</div></div>
   </div>
 
@@ -200,13 +198,14 @@
       <h1><span class="dot-pulse"></span>Menyiapkan kamera &amp; MediaPipe...</h1>
       <p>Browser akan meminta izin akses kamera — klik <b>Allow</b> saat muncul.</p>
       <p>Kalau ini tidak jalan lebih dari beberapa detik, kemungkinan halamannya dibuka langsung dari file (<code>file://</code>). Jalankan server lokal dulu:</p>
-      <p><code>python -m http.server 8000</code></p>
-      <p>lalu buka <code>http://localhost:8000/index.html</code>.</p>
+      <p><code>python -m http.server 8666</code></p>
+      <p>lalu buka <code>http://localhost:8666/index.html</code>.</p>
+      <p>Pastikan juga file <code>models/hand_landmarker.task</code> sudah ada (lihat README, sekali download saja).</p>
     </div>
   </div>
 </div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="vendor/three.min.js"></script>
 
 <script>
 (function(){
@@ -251,8 +250,13 @@
     pyramid: "Piramida", cylinder: "Tabung", torus: "Donat",
   };
 
-  let selectedShapeIndex = 0;
-  let selectedShapeType = SHAPE_TYPES[selectedShapeIndex];
+  // Tiap jari punya bentuknya sendiri — begitu jari itu ditegakkan (edge-triggered,
+  // bukan pose diam), langsung memunculkan bentuk yang dipetakan ke jari itu.
+  const FINGER_SHAPE_MAP = {
+    thumb: "sphere", index: "box", middle: "cone",
+    ring: "pyramid", pinky: "cylinder",
+  };
+  const FINGER_TIP_LANDMARK = { thumb: 4, index: 8, middle: 12, ring: 16, pinky: 20 };
 
   // ----------------------------------------------------------------
   // Setup Three.js
@@ -344,8 +348,8 @@
   let shapeIdCounter = 0;
   const shapes = [];
 
-  function spawnShape(nx, ny){
-    const type = selectedShapeType;
+  function spawnShape(nx, ny, type){
+    type = type || "sphere";
     const group = makeShapeMesh(type);
     group.scale.setScalar(0.001);
     scene.add(group);
@@ -434,32 +438,40 @@
   }
 
   // ----------------------------------------------------------------
-  // Label pemilih bentuk (gesture "V")
+  // Label pop-up sekilas menampilkan bentuk apa yang baru saja dibuat
   // ----------------------------------------------------------------
   const pickerEl = document.getElementById("shapePicker");
   const pickerIconEl = document.getElementById("pickerIcon");
   const pickerNameEl = document.getElementById("pickerName");
+  let pickerHideTimer = null;
 
-  function cycleSelectedShape(){
-    selectedShapeIndex = (selectedShapeIndex + 1) % SHAPE_TYPES.length;
-    selectedShapeType = SHAPE_TYPES[selectedShapeIndex];
-    pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
-    pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
+  function flashPicker(type, nx, ny){
+    const px = normToPixel(nx, ny);
+    pickerIconEl.textContent = SHAPE_ICON[type];
+    pickerNameEl.textContent = SHAPE_LABEL[type];
+    pickerEl.style.left = px.x + "px";
+    pickerEl.style.top = (px.y - 20) + "px";
+    pickerEl.classList.add("show");
+    clearTimeout(pickerHideTimer);
+    pickerHideTimer = setTimeout(() => pickerEl.classList.remove("show"), 900);
   }
-  // set label awal
-  pickerIconEl.textContent = SHAPE_ICON[selectedShapeType];
-  pickerNameEl.textContent = SHAPE_LABEL[selectedShapeType];
 
   // Status "tegak/tertekuk" tiap jari (dipakai untuk deteksi TRANSISI,
-  // bukan pose diam) — supaya "V turun jadi W lalu balik ke V" tidak
-  // ke-baca sebagai V-sign statis.
+  // bukan pose diam). Jempol dicek beda cara (menjauh dari pangkal
+  // kelingking) karena arahnya menyamping, bukan naik seperti jari lain.
   function fingerExtFlags(lm){
+    const handSize = Math.max(dist2(lm[0], lm[9]), 1e-4);
+    const thumbSpread = (dist2(lm[4], lm[17]) - dist2(lm[3], lm[17])) / handSize;
     return {
+      thumb:  thumbSpread > 0.12,
       index:  lm[8].y  < lm[6].y  - V_SIGN_MARGIN,
       middle: lm[12].y < lm[10].y - V_SIGN_MARGIN,
       ring:   lm[16].y < lm[14].y - V_SIGN_MARGIN,
+      pinky:  lm[20].y < lm[18].y - V_SIGN_MARGIN,
     };
   }
+
+  const EMPTY_FINGER_FLAGS = { thumb: false, index: false, middle: false, ring: false, pinky: false };
 
   // ----------------------------------------------------------------
   // Data tangan (diisi oleh MediaPipe, dibaca oleh loop render)
@@ -473,7 +485,7 @@
       latestHands[id] = {
         wasPinching: false, heldShapeId: null,
         resizingShapeId: null,
-        prevFingerFlags: { index: false, middle: false, ring: false },
+        prevFingerFlags: { ...EMPTY_FINGER_FLAGS },
         lastSeen: 0, currentlyVisible: false,
       };
     }
@@ -572,21 +584,21 @@
       "<h1>⚠️ " + title + "</h1>" +
       "<p>" + detail + "</p>" +
       "<p>Kalau kamu membuka file ini langsung dari <code>file://</code>, coba jalankan server lokal:</p>" +
-      "<p><code>python -m http.server 8000</code></p>" +
-      "<p>lalu buka <code>http://localhost:8000/index.html</code> dan izinkan akses kamera saat diminta.</p>";
+      "<p><code>python -m http.server 8666</code></p>" +
+      "<p>lalu buka <code>http://localhost:8666/index.html</code> dan izinkan akses kamera saat diminta.</p>";
     bootEl.classList.remove("hidden");
     setStatus("dead", "Gagal mengakses kamera");
   }
 
-  const TASKS_VISION_VERSION = "0.10.14";
-  const HAND_MODEL_URL =
-    "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+  // Semua library & model diambil dari file lokal (folder vendor/ & models/)
+  // supaya aplikasi bisa jalan offline setelah setup awal — tidak perlu
+  // internet lagi kecuali sekali download model .task (lihat README).
+  const WASM_DIR_URL = "vendor/mediapipe/wasm";
+  const HAND_MODEL_URL = "models/hand_landmarker.task";
 
   async function createHandLandmarker(visionModule, delegate){
     return visionModule.HandLandmarker.createFromOptions(
-      await visionModule.FilesetResolver.forVisionTasks(
-        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/wasm`
-      ),
+      await visionModule.FilesetResolver.forVisionTasks(WASM_DIR_URL),
       {
         baseOptions: { modelAssetPath: HAND_MODEL_URL, delegate },
         runningMode: "VIDEO",
@@ -598,13 +610,12 @@
   async function initHandTracking(){
     let visionModule;
     try {
-      visionModule = await import(
-        `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${TASKS_VISION_VERSION}/+esm`
-      );
+      visionModule = await import("./vendor/mediapipe/vision_bundle.mjs");
     } catch (err){
       showBootError(
         "Library tidak termuat",
-        "Gagal memuat MediaPipe Tasks Vision dari CDN. Cek koneksi internetmu, lalu refresh halaman ini."
+        "Gagal memuat file vendor/mediapipe/vision_bundle.mjs. Pastikan folder 'vendor' ada " +
+        "di sebelah index.html dan diakses lewat http://localhost, bukan file://."
       );
       return;
     }
@@ -619,7 +630,9 @@
       } catch (err2){
         showBootError(
           "Model gagal dimuat",
-          "Pesan error: " + (err2 && err2.message ? err2.message : err2)
+          "Pesan error: " + (err2 && err2.message ? err2.message : err2) +
+          ". Kemungkinan besar file <code>models/hand_landmarker.task</code> belum ada — " +
+          "lihat README untuk link download-nya (sekali download saja, lalu bisa offline)."
         );
         return;
       }
@@ -747,34 +760,22 @@
           st.heldShapeId = null;
         }
         st.wasPinching = false;
-        st.prevFingerFlags = { index: false, middle: false, ring: false };
+        st.prevFingerFlags = { ...EMPTY_FINGER_FLAGS };
         continue;
       }
 
-      // --- Deteksi transisi jari: ganti mode & summon bentuk ---
+      // --- Tiap jari yang baru ditegakkan (edge-triggered) memunculkan bentuknya sendiri ---
       if (st.landmarks){
         const flags = fingerExtFlags(st.landmarks);
-        const prev = st.prevFingerFlags || { index: false, middle: false, ring: false };
+        const prev = st.prevFingerFlags || EMPTY_FINGER_FLAGS;
 
-        const ringRisingNow = flags.ring && !prev.ring;
-
-        // Ganti mode: telunjuk ATAU tengah diturunkan (salah satu saja cukup).
-        // Dikecualikan kalau momen ini jari manis sedang naik (itu summon,
-        // bukan niat ganti mode) — mencegah salah baca kalau jari manis naik
-        // membuat telunjuk/tengah ikut sedikit turun karena keterbatasan fisik jari.
-        const indexLowered = prev.index && !flags.index;
-        const middleLowered = prev.middle && !flags.middle;
-        if ((indexLowered || middleLowered) && !ringRisingNow){
-          cycleSelectedShape();
-        }
-
-        // Summon bentuk: jari manis diayun ke atas (tertekuk -> tegak),
-        // hanya dihitung kalau telunjuk & tengah sedang tegak (posisi V/W).
-        if (ringRisingNow && flags.index && flags.middle){
-          const i8 = st.landmarks[8], i12 = st.landmarks[12], i16 = st.landmarks[16];
-          const px = (i8.x + i12.x + i16.x) / 3;
-          const py = (i8.y + i12.y + i16.y) / 3;
-          spawnShape(px, py);
+        for (const finger in FINGER_SHAPE_MAP){
+          if (flags[finger] && !prev[finger]){
+            const tip = st.landmarks[FINGER_TIP_LANDMARK[finger]];
+            const type = FINGER_SHAPE_MAP[finger];
+            spawnShape(tip.x, tip.y, type);
+            flashPicker(type, tip.x, tip.y);
+          }
         }
 
         st.prevFingerFlags = flags;
@@ -830,22 +831,6 @@
       if (s.heldBy && isInTrashZone(s.nx, s.ny)){ armed = true; break; }
     }
     trashEl.classList.toggle("armed", armed);
-
-    // Posisikan label pemilih bentuk di dekat tangan yang sedang telunjuk+tengah tegak
-    let showPicker = false;
-    for (const handId in latestHands){
-      const st = latestHands[handId];
-      const flags = st.prevFingerFlags;
-      if (flags && flags.index && flags.middle && st.currentlyVisible && st.landmarks){
-        const tip = st.landmarks[8];
-        const px = normToPixel(tip.x, tip.y);
-        pickerEl.style.left = px.x + "px";
-        pickerEl.style.top = (px.y - 20) + "px";
-        showPicker = true;
-        break;
-      }
-    }
-    pickerEl.classList.toggle("show", showPicker);
   }
 
   // ----------------------------------------------------------------
