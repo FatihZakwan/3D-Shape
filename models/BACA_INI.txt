@@ -1,0 +1,16 @@
+File model AI (hand_landmarker.task) belum bisa ikut dibundel otomatis
+karena di-hosting di server Google, bukan npm — jadi perlu 1x download manual:
+
+1. Buka link ini di browser:
+   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+
+2. Browser akan otomatis mengunduh file bernama "hand_landmarker.task"
+   (sekitar 7-8 MB).
+
+3. Pindahkan file itu ke folder ini (folder "models"), sehingga strukturnya:
+   models/hand_landmarker.task
+
+4. Selesai — file placeholder ini (BACA_INI.txt) boleh dihapus kalau mau.
+
+Setelah file model ini ada, aplikasi sudah bisa jalan 100% offline
+(kamera + tracking + render semuanya lokal, tidak butuh internet lagi).
