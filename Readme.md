@@ -1,65 +1,92 @@
-# 3D Shape Sandbox — Hand Gesture (Browser-only)
+# 3D Shape Sandbox — Hand Gesture (Browser-only, Offline)
 
-Versi ini **tidak lagi butuh Python/backend sama sekali**. Semua deteksi
-tangan (MediaPipe Hands) dan render 3D (Three.js) jalan langsung di
-browser — lebih ringan disetup, dan tracking-nya lebih "nempel" karena
-tidak ada lagi delay kirim data lewat WebSocket + JPEG seperti versi lama.
+Semua deteksi tangan (MediaPipe Hands) dan render 3D (Three.js) jalan
+langsung di browser — tidak butuh Python/backend, dan setelah setup awal
+**bisa jalan 100% offline** (library sudah dibundel lokal di folder
+`vendor/`, tinggal model AI-nya yang perlu sekali download manual).
 
-`hand_tracker.py` dan `requirements.txt` sudah tidak diperlukan lagi
-untuk versi ini (boleh dihapus, atau dibiarkan saja sebagai arsip).
+## Setup Awal (sekali saja)
+
+1. Download file model AI di link ini (buka di browser, otomatis kedownload):
+   ```
+   https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+   ```
+2. Pindahkan file hasil download itu ke folder `models/`, sehingga jadi:
+   ```
+   models/hand_landmarker.task
+   ```
+   (lihat `models/BACA_INI.txt` kalau lupa link-nya)
+
+Setelah itu, kamu tidak perlu internet lagi untuk menjalankan aplikasi ini.
 
 ## Cara Menjalankan
 
-Karena browser butuh mengakses webcam langsung, jalankan lewat server
-lokal (bukan langsung double-click file, supaya izin kamera pasti jalan):
-
 ```bash
 cd folder-proyek-ini
-python -m http.server 8000
+python -m http.server 8666
 ```
 
-Lalu buka `http://localhost:8000/index.html` di Chrome/Edge, dan klik
+Lalu buka `http://localhost:8666/index.html` di Chrome/Edge, dan klik
 **Allow** saat browser minta izin kamera.
 
-(Kalau kamu double-click `index.html` langsung dan ternyata browsermu
-tetap mengizinkan kamera dari `file://`, itu juga boleh — tapi kalau
-macet di layar loading, pindah ke cara server lokal di atas.)
+(Boleh pakai port lain kalau mau, `8666` cuma contoh — tidak ada bagian
+kode yang bergantung ke nomor port tertentu.)
 
 ## Cara Berinteraksi
 
 | Gesture | Efek |
 |---|---|
-| ✌️👇 Dari telunjuk+tengah tegak, turunkan **salah satu saja** (telunjuk atau tengah) | Ganti jenis bentuk berikutnya (bola → kubus → kerucut → piramida → tabung → donat → ulang) |
-| 💍👆 Dari posisi telunjuk+tengah tegak, ayunkan **jari manis ke atas** | Memunculkan 1 bentuk baru. Ayun turun lalu naik lagi untuk memunculkan 1 lagi, dan seterusnya — tidak akan spam walau tangan diam |
+| 👍 Tegakkan **jempol** | Memunculkan **Bola** |
+| ☝️ Tegakkan **telunjuk** | Memunculkan **Kubus** |
+| 🖕 Tegakkan **jari tengah** | Memunculkan **Kerucut** |
+| 💍 Tegakkan **jari manis** | Memunculkan **Piramida** |
+| 🤙 Tegakkan **kelingking** | Memunculkan **Tabung** |
 | 🤏 Pinch (jempol + telunjuk) di atas sebuah bentuk | Ambil & geser bentuk, mengikuti jari secara halus |
 | 🤏🤏 Pegang bentuk dengan satu tangan, lalu pinch juga dengan tangan satunya di dekat bentuk itu | **Resize & rotate**: tarik tangan menjauh = besar, dekatkan = kecil, putar tangan = memutar bentuknya |
 | Lepas pinch di atas ikon 🗑️ (pojok kanan-bawah) | Menghapus bentuk yang sedang dipegang |
 | Tekan `C` di keyboard | Bersihkan semua bentuk (opsional) |
 
-Catatan: pinch sekarang murni untuk mengambil/menggeser/resize — tidak lagi
-dipakai untuk membuat bentuk baru.
-
-Dua tangan bisa dipakai bersamaan dan independen satu sama lain.
+Catatan penting:
+- Tiap jari cuma memunculkan bentuk **sekali per tegak** (edge-triggered) —
+  tegakkan jari, muncul 1 bentuk; turunkan lalu tegakkan lagi, muncul 1 lagi.
+  Menahan jari tetap tegak tidak akan terus-menerus memunculkan bentuk baru.
+- Pinch murni untuk mengambil/menggeser/resize — tidak dipakai untuk membuat
+  bentuk baru sama sekali.
+- Dua tangan bisa dipakai bersamaan dan independen satu sama lain.
 
 ## Kalau Ada Masalah
 
 - **Loading tidak selesai-selesai** — biasanya karena diakses lewat
-  `file://` dan browser memblokir kamera. Jalankan lewat
-  `python -m http.server 8000` seperti di atas.
+  `file://` dan browser memblokir kamera/module import. Jalankan lewat
+  `python -m http.server 8666` seperti di atas.
+- **"Model gagal dimuat"** — pastikan `models/hand_landmarker.task` sudah
+  ada persis di path itu (lihat Setup Awal).
 - **"Kamera tidak bisa diakses"** — tutup aplikasi/tab lain yang mungkin
   memakai webcam (Zoom, Teams, tab video call lain), lalu refresh halaman.
-- **Tracking terasa berat/patah-patah** — turunkan `modelComplexity` dari
-  `1` ke `0` di bagian `hands.setOptions({...})` pada `index.html`, atau
-  turunkan resolusi `width`/`height` di konfigurasi `Camera`.
-- Mau atur seberapa sensitif pinch, radius ambil bentuk, kecepatan resize,
-  dll — semua konstanta ada di bagian atas `<script>` pada `index.html`.
+- **Tracking terasa berat/patah-patah** — turunkan resolusi di bagian
+  `getUserMedia({ video: {...} })` pada `index.html`.
+- Mau atur sensitivitas gesture (ambang pinch, radius ambil bentuk,
+  kecepatan resize, margin deteksi jari) — semua konstanta ada di bagian
+  atas `<script>` pada `index.html`.
 
 ## Struktur Berkas
 
 ```
 hand_gesture_3d/
-├── index.html           # satu-satunya file yang perlu dijalankan
-├── hand_tracker.py       # (arsip, tidak dipakai lagi di versi ini)
-├── requirements.txt      # (arsip, tidak dipakai lagi di versi ini)
+├── index.html                    # satu-satunya file yang perlu dijalankan
+├── vendor/
+│   ├── three.min.js               # Three.js (offline, dari npm)
+│   └── mediapipe/
+│       ├── vision_bundle.mjs      # MediaPipe Tasks Vision (offline, dari npm)
+│       └── wasm/                  # runtime WASM MediaPipe (offline, dari npm)
+├── models/
+│   ├── hand_landmarker.task       # model AI (kamu download manual sekali)
+│   └── BACA_INI.txt
+├── hand_tracker.py                # (arsip, tidak dipakai lagi di versi ini)
+├── requirements.txt               # (arsip, tidak dipakai lagi di versi ini)
 └── README.md
 ```
+
+Folder `vendor/` aman untuk ikut di-commit ke git (total ~19MB, semuanya
+di bawah batas ukuran file GitHub). File `models/hand_landmarker.task`
+(~7-8MB) juga aman di-commit setelah kamu download.
